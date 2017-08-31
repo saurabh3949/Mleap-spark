@@ -60,32 +60,26 @@ object MnistDriver {
       .setInputCols(pixelFeatures)
       .setOutputCol("features")
 
-    val stringIndexer = { new StringIndexer()
-      .setInputCol(predictionCol)
-      .setOutputCol("label_index")
-      .fit(dataset)
-    }
-
     val scaler = new StandardScaler()
       .setInputCol(vector_assembler.getOutputCol)
       .setOutputCol("scaledFeatures")
       .setWithStd(true)
-      .setWithMean(true)
+      .setWithMean(false)
 
 
-    val featurePipeline = new Pipeline().setStages(Array(vector_assembler, stringIndexer, scaler))
+    val featurePipeline = new Pipeline().setStages(Array(vector_assembler, scaler))
 
     // Transform the raw data with the feature pipeline and persist it
     val featureModel = featurePipeline.fit(dataset)
     val datasetWithFeatures = featureModel.transform(dataset)
 
     // Select only the data needed for training and persist it
-    val datasetPcaFeaturesOnly = datasetWithFeatures.select(stringIndexer.getOutputCol, scaler.getOutputCol)
+    val datasetPcaFeaturesOnly = datasetWithFeatures.select(predictionCol, scaler.getOutputCol)
     val datasetPcaFeaturesOnlyPersisted = datasetPcaFeaturesOnly.persist()
 
     // For test dataset
     val testDatasetWithFeatures = featureModel.transform(test)
-    val testDatasetPcaFeaturesOnly = testDatasetWithFeatures.select(stringIndexer.getOutputCol, scaler.getOutputCol)
+    val testDatasetPcaFeaturesOnly = testDatasetWithFeatures.select(predictionCol, scaler.getOutputCol)
     val testDatasetPcaFeaturesOnlyPersisted = testDatasetPcaFeaturesOnly.persist()
 
     val mlp = new MultilayerPerceptronClassifier()
@@ -94,15 +88,15 @@ object MnistDriver {
       .setSeed(1234L)
       .setMaxIter(50).
       setFeaturesCol(scaler.getOutputCol).
-      setLabelCol(stringIndexer.getOutputCol).
+      setLabelCol(predictionCol).
       setPredictionCol("prediction")
 
     val mlpModel = mlp.fit(datasetPcaFeaturesOnlyPersisted)
 
-    val results = mlpModel.transform(testDatasetPcaFeaturesOnlyPersisted).select("prediction", "label_index").cache()
+    val results = mlpModel.transform(testDatasetPcaFeaturesOnlyPersisted).select("prediction", predictionCol).cache()
 
-    val predictionAndLabels = results.rdd.map { case Row(prediction:Double, label:Double) =>
-      (prediction, label)
+    val predictionAndLabels = results.rdd.map { case Row(prediction:Double, label:Int) =>
+      (prediction, label.toDouble)
     }
 
     val metrics = new MulticlassMetrics(predictionAndLabels)
@@ -116,10 +110,10 @@ object MnistDriver {
     println(s"Accuracy = $accuracy")
 
 
-    val pipeline = SparkUtil.createPipelineModel(uid = "pipeline", Array(featureModel, mlpModel))
+    val pipeline = SparkUtil.createPipelineModel(uid = "pipe2line", Array(featureModel, mlpModel))
 
     val sbc = SparkBundleContext()
-    for(bf <- managed(BundleFile("jar:file:/tmp/mnist.model.mlp.zip"))) {
+    for(bf <- managed(BundleFile("jar:file:/tmp/mnist.model5.mlp.zip"))) {
       pipeline.writeBundle.save(bf)(sbc).get
     }
   }
